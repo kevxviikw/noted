@@ -1,0 +1,303 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <link rel="manifest" href="/static/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/static/icons/ICON.jpg">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Noted – Progress Daily</title>
+  <meta name="theme-color" content="#16a34a">
+  <style>
+    :root{--bg:#0b0b0c;--panel:#131316;--muted:#9aa0a6;--text:#e6e6e7;--accent:#22c55e;--accent-weak:#22c55e1f;--accent-border:#22c55e66;--danger:#ef4444;--brand:#16a34a;--btn:#1f2937;--btn-hover:#2b3647;--border:#25262b}
+    @media (prefers-color-scheme: light){:root{--bg:#f8fafc;--panel:#fff;--muted:#6b7280;--text:#0f172a;--btn:#eef2f7;--btn-hover:#e6ebf3;--border:#e5e7eb}}
+    *{box-sizing:border-box}html,body{height:100%}body{margin:0;font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;background:var(--bg);color:var(--text)}
+    .app{max-width:980px;margin:0 auto;padding:16px}
+    header{display:flex;align-items:center;gap:12px;justify-content:space-between;margin-bottom:12px}
+    .brand{display:flex;align-items:center;gap:10px;font-weight:800}
+    .brand .logo{width:28px;height:28px;border-radius:8px;background:linear-gradient(135deg,var(--brand),#19c37d);display:grid;place-items:center;color:#fff;font-weight:900;box-shadow:0 6px 18px #16a34a66}
+    .card{background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:14px}
+    .wrap{display:grid;grid-template-columns:320px 1fr;gap:14px}
+    @media (max-width:860px){.wrap{grid-template-columns:1fr}}
+    .muted{color:var(--muted);font-size:.94rem}.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.grow{flex:1}
+    button,select,input[type="text"]{background:var(--btn);color:var(--text);border:1px solid var(--border);border-radius:10px;padding:10px 12px;font-size:14px}
+    button{cursor:pointer}button:hover{background:var(--btn-hover)}.btn-primary{background:var(--brand);border-color:transparent;color:white;font-weight:700}.btn-danger{background:#3b0b0b;border-color:#4d1a1a;color:#ffb4b4}.btn-ghost{background:transparent;border-color:var(--border)}
+    .goal-header{display:flex;gap:10px;align-items:center;margin-bottom:10px}.goal-list{display:grid;gap:8px}.goal-select{width:100%}
+    .statbar{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:10px}.stat{background:var(--panel);border:1px solid var(--border);padding:10px;border-radius:12px;text-align:center}
+    .stat .label{font-size:.8rem;color:var(--muted)}.stat .value{font-size:1.2rem;font-weight:800}
+    .toolbar{display:flex;gap:8px;align-items:center;justify-content:space-between;margin-bottom:8px;flex-wrap:wrap}
+    .cal-header{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:10px;margin-bottom:6px}
+    .cal-title{text-align:center;font-weight:800}.cal-nav{display:flex;gap:6px;justify-content:flex-end}
+    .weekday{display:grid;grid-template-columns:repeat(7,1fr);gap:6px;margin-bottom:6px;color:var(--muted);font-weight:700;text-align:center}
+    .calendar{display:grid;grid-template-columns:repeat(7,1fr);gap:6px}
+    .day{border:1px solid var(--border);border-radius:12px;min-height:56px;display:flex;align-items:center;justify-content:center;font-weight:700;user-select:none;transition:transform .03s ease;background:var(--panel)}
+    .day.out{opacity:.35;background:transparent;border-style:dashed}.day.done{background:linear-gradient(135deg,var(--accent-weak),transparent);border-color:var(--accent-border);box-shadow:inset 0 0 0 1px var(--accent-border)}
+    .day.today{outline:2px solid #3b82f6}.day:active{transform:scale(.98)}
+    .pill{padding:6px 10px;border-radius:999px;background:var(--btn);border:1px solid var(--border);color:var(--muted);font-size:.85rem}
+    .hr{height:1px;background:var(--border);margin:12px 0}
+  </style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <div class="brand"><div class="logo">✓</div><div><div style="font-size:1.15rem;">Noted</div><div class="muted" style="margin-top:-2px;">Progess Daily</div></div></div>
+  </header>
+
+  <div class="wrap">
+    <!-- LEFT: Goals & Stats -->
+    <section class="card">
+      <div class="goal-header"><strong>Goals</strong></div>
+      <div class="goal-list">
+        <select id="goalSelect" class="goal-select"></select>
+        <div class="row"><input id="newGoalName" class="grow" type="text" placeholder="Create a new goal e.g., No sugar drinks"/></div>
+        <div class="row">
+          <button id="btnAddGoal" class="btn-primary">➕ Add Goal</button>
+          <button id="btnRenameGoal">✏️ Rename</button>
+          <button id="btnDeleteGoal" class="btn-danger">🗑 Delete</button>
+        </div>
+      </div>
+      <div class="hr"></div>
+      <div><strong>Stats</strong></div>
+      <div class="statbar">
+        <div class="stat"><div class="label">Current streak</div><div id="statCurrent" class="value">0</div></div>
+        <div class="stat"><div class="label">Longest streak</div><div id="statLongest" class="value">0</div></div>
+        <div class="stat"><div class="label">Completion (month)</div><div id="statRate" class="value">0%</div></div>
+      </div>
+      <div class="muted" style="margin-top:8px">Data is saved on the server (SQLite).</div>
+    </section>
+
+    <!-- RIGHT: Calendar -->
+    <section class="card">
+      <div class="toolbar">
+        <div class="row">
+          <button id="btnToday" title="Jump to current month">📍 Today</button>
+          <button id="btnToggleToday" title="Toggle today's check">✅ Toggle Today</button>
+        </div>
+        <span class="pill" id="activeGoalBadge">—</span>
+      </div>
+      <div class="cal-header">
+        <div class="row"><button id="btnPrev">← Prev</button></div>
+        <div id="title" class="cal-title">Month YYYY</div>
+        <div class="cal-nav"><button id="btnNext">Next →</button></div>
+      </div>
+      <div class="weekday" id="weekdayHdr"></div>
+      <div class="calendar" id="calendar"></div>
+      <div class="muted" style="margin-top:8px">Tip: Tap a day to mark done / not done.</div>
+    </section>
+  </div>
+</div>
+
+<script>
+
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("/static/sw.js").catch(console.error);
+  });
+}
+
+/** ===== API Client ===== */
+const API_BASE = location.origin + "/api";  // same server
+// If you set a token in the backend:  $env:NOTED_TOKEN="mysecret"
+// then set it here too:
+const API_TOKEN = ""; // e.g., "mysecret"
+
+function api(path, options = {}) {
+  const headers = Object.assign(
+    {"Content-Type":"application/json"},
+    API_TOKEN ? {"Authorization":"Bearer " + API_TOKEN} : {},
+    options.headers || {}
+  );
+  return fetch(API_BASE + path, {...options, headers}).then(async r=>{
+    if(!r.ok){
+      let msg = r.statusText;
+      try { const j = await r.json(); if (j.detail) msg = j.detail; } catch {}
+      throw new Error(msg);
+    }
+    const ct = r.headers.get("content-type")||"";
+    return ct.includes("application/json") ? r.json() : r.text();
+  });
+}
+
+// Goals API
+const listGoals   = () => api("/goals", {method:"GET"});
+const createGoal  = (name) => api("/goals", {method:"POST", body:JSON.stringify({name})});
+const renameGoal  = (id, name) => api(`/goals/${id}`, {method:"PATCH", body:JSON.stringify({name})});
+const deleteGoal  = (id) => api(`/goals/${id}`, {method:"DELETE"});
+
+// Checks & stats API
+function monthRange(y,m){
+  const last = new Date(y, m, 0).getDate(); // m=1..12
+  const start = `${y}-${String(m).padStart(2,"0")}-01`;
+  const end   = `${y}-${String(m).padStart(2,"0")}-${String(last).padStart(2,"0")}`;
+  return {start, end};
+}
+const getChecks   = (goalId, y, m) => {
+  const {start, end} = monthRange(y,m);
+  return api(`/goals/${goalId}/checks?start=${start}&end=${end}`, {method:"GET"});
+};
+const setCheck    = (goalId, iso, done) => api(`/goals/${goalId}/checks/${iso}`, {method:"PUT", body:JSON.stringify({done})});
+const getStats    = (goalId, y, m) => api(`/goals/${goalId}/stats?year=${y}&month=${m}`, {method:"GET"});
+
+/** ===== UI State & Elements ===== */
+const $ = (s, root=document)=>root.querySelector(s);
+const weekdayHdr = $("#weekdayHdr"); const calendarEl = $("#calendar");
+const titleEl    = $("#title"); const badge = $("#activeGoalBadge");
+const goalSelect = $("#goalSelect"); const newGoalName = $("#newGoalName");
+const statCurrent=$("#statCurrent"), statLongest=$("#statLongest"), statRate=$("#statRate");
+const btnAdd=$("#btnAddGoal"), btnRen=$("#btnRenameGoal"), btnDel=$("#btnDeleteGoal");
+const btnPrev=$("#btnPrev"), btnNext=$("#btnNext"), btnToday=$("#btnToday"), btnToggleToday=$("#btnToggleToday");
+
+const today = new Date(); let viewYear = today.getFullYear(); let viewMonth = today.getMonth()+1;
+let goals = []; let selectedGoalId = null;
+let monthCache = {}; // { `${goalId}:${YYYY-MM}` : { 'YYYY-MM-DD': true } }
+
+function pad2(n){ return String(n).padStart(2,"0"); }
+function toISO(d){ return `${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())}`; }
+function daysInMonth(y,m){ return new Date(y,m,0).getDate(); }
+function escapeHtml(s){ return (s||"").replace(/[&<>'"]/g, c=>({ '&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;' }[c])); }
+
+function renderWeekdays(){
+  const names = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+  weekdayHdr.innerHTML = names.map(n=>`<div style="text-align:center;font-weight:800">${n}</div>`).join("");
+}
+
+function curGoal(){ return goals.find(g=>g.id===selectedGoalId) || null; }
+function setSelectedGoal(id){
+  selectedGoalId = id;
+  localStorage.setItem("noted_selected_goal", String(id || ""));
+}
+
+function renderGoalUI(){
+  goalSelect.innerHTML = goals.map(g=>`<option value="${g.id}" ${g.id===selectedGoalId?"selected":""}>${escapeHtml(g.name)}</option>`).join("");
+  const g = curGoal();
+  badge.textContent = g? `Goal: ${g.name}` : "No goal selected";
+}
+
+async function renderCalendar(){
+  const g = curGoal(); if(!g){ calendarEl.innerHTML=""; titleEl.textContent="No goal"; return; }
+  const monthName = new Date(viewYear, viewMonth-1, 1).toLocaleString(undefined,{month:"long"});
+  titleEl.textContent = `${monthName} ${viewYear}`;
+
+  const cacheKey = `${g.id}:${viewYear}-${pad2(viewMonth)}`;
+  if(!monthCache[cacheKey]) monthCache[cacheKey] = (await getChecks(g.id, viewYear, viewMonth)).checks || {};
+  const marks = monthCache[cacheKey];
+
+  const first = new Date(viewYear, viewMonth-1, 1);
+  const firstWD = first.getDay();  // 0..6 (Sun..Sat)
+  const total = daysInMonth(viewYear, viewMonth);
+  const prevMonth = (viewMonth===1)?12:viewMonth-1; const prevYear = (viewMonth===1)?viewYear-1:viewYear;
+  const prevTotal = daysInMonth(prevYear, prevMonth);
+
+  const cells = [];
+  for(let i=0;i<firstWD;i++){ cells.push({type:"out", label:String(prevTotal - firstWD + 1 + i)}); }
+  for(let d=1; d<=total; d++){
+    const dateObj = new Date(viewYear, viewMonth-1, d);
+    const iso = toISO(dateObj);
+    const done = !!marks[iso];
+    const isToday = (dateObj.toDateString()===today.toDateString());
+    cells.push({type:"in", d:dateObj, label:String(d), done, isToday, iso});
+  }
+  const remainder = cells.length % 7;
+  if(remainder!==0){ for(let i=1;i<=7-remainder;i++) cells.push({type:"out", label:String(i)}) }
+
+  calendarEl.innerHTML = "";
+  for(const c of cells){
+    const el = document.createElement("button");
+    el.className = "day";
+    if(c.type==="out"){ el.classList.add("out"); el.textContent=c.label; el.disabled=true; }
+    else{
+      if(c.done) el.classList.add("done");
+      if(c.isToday) el.classList.add("today");
+      el.textContent = c.label;
+      el.addEventListener("click", async ()=>{
+        const newState = !marks[c.iso];
+        await setCheck(g.id, c.iso, newState);
+        marks[c.iso] = newState ? true : undefined;
+        await refreshStats();
+        renderCalendar();
+      });
+    }
+    calendarEl.appendChild(el);
+  }
+}
+
+async function refreshStats(){
+  const g = curGoal(); if(!g){ statCurrent.textContent=0; statLongest.textContent=0; statRate.textContent="0%"; return; }
+  const s = await getStats(g.id, viewYear, viewMonth);
+  statCurrent.textContent = s.current_streak ?? 0;
+  statLongest.textContent = s.longest_streak ?? 0;
+  statRate.textContent = ((s.completion_rate ?? 0).toFixed(0)) + "%";
+}
+
+async function loadInitial(){
+  goals = await listGoals();
+  const savedSel = parseInt(localStorage.getItem("noted_selected_goal")||"0",10);
+  if(goals.length){
+    if(goals.some(g=>g.id===savedSel)) setSelectedGoal(savedSel);
+    else setSelectedGoal(goals[0].id);
+  }else{
+    setSelectedGoal(null);
+  }
+  renderWeekdays();
+  renderGoalUI();
+  await renderCalendar();
+  await refreshStats();
+}
+
+// Event bindings
+goalSelect.addEventListener("change", async e=>{
+  setSelectedGoal(parseInt(e.target.value,10));
+  monthCache = {};
+  await renderCalendar(); await refreshStats();
+});
+btnPrev.addEventListener("click", async ()=>{
+  viewMonth -= 1; if(viewMonth<1){ viewMonth=12; viewYear-=1; }
+  await renderCalendar(); await refreshStats();
+});
+btnNext.addEventListener("click", async ()=>{
+  viewMonth += 1; if(viewMonth>12){ viewMonth=1; viewYear+=1; }
+  await renderCalendar(); await refreshStats();
+});
+btnToday.addEventListener("click", async ()=>{
+  viewYear = today.getFullYear(); viewMonth = today.getMonth()+1;
+  await renderCalendar(); await refreshStats();
+});
+btnToggleToday.addEventListener("click", async ()=>{
+  const g = curGoal(); if(!g) return;
+  const iso = toISO(today);
+  const cacheKey = `${g.id}:${viewYear}-${pad2(viewMonth)}`;
+  if(!monthCache[cacheKey]) monthCache[cacheKey] = (await getChecks(g.id, viewYear, viewMonth)).checks || {};
+  const newState = !monthCache[cacheKey][iso];
+  await setCheck(g.id, iso, newState);
+  monthCache[cacheKey][iso] = newState ? true : undefined;
+  await renderCalendar(); await refreshStats();
+});
+
+btnAdd.addEventListener("click", async ()=>{
+  const name = (newGoalName.value||"").trim(); if(!name) return;
+  const g = await createGoal(name);
+  goals = await listGoals();
+  setSelectedGoal(g.id);
+  newGoalName.value="";
+  monthCache = {}; await renderCalendar(); await refreshStats(); renderGoalUI();
+});
+btnRen.addEventListener("click", async ()=>{
+  const g = curGoal(); if(!g) return;
+  const nv = prompt("Rename goal:", g.name); if(!nv) return;
+  await renameGoal(g.id, nv.trim());
+  goals = await listGoals(); renderGoalUI();
+});
+btnDel.addEventListener("click", async ()=>{
+  const g = curGoal(); if(!g) return;
+  if(!confirm(`Delete "${g.name}"? This removes its checks.`)) return;
+  await deleteGoal(g.id);
+  goals = await listGoals();
+  if(goals.length) setSelectedGoal(goals[0].id); else setSelectedGoal(null);
+  monthCache = {}; await renderCalendar(); await refreshStats(); renderGoalUI();
+});
+
+loadInitial();
+</script>
+</body>
+</html>
