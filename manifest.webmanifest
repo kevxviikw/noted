@@ -1,0 +1,13 @@
+{
+  "name": "Noted",
+  "short_name": "Noted",
+  "description": "Progress Daily",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#0b0b0c",
+  "theme_color": "#16a34a",
+  "icons": [
+    { "src": "/static/icons/ICON.jpg", "sizes": "192x192", "type": "image/jpg" }
+  ]
+}
