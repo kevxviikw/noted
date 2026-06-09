@@ -7,23 +7,26 @@
 
 // ── Constants ──────────────────────────────────────────────────────────────
 const STORAGE_KEY   = 'noted_v2';
-const WINDOW_PAST   = 7;   // days before today to render
-const WINDOW_FUTURE = 30;  // days after today to render
+const WINDOW_PAST   = 7;
+const WINDOW_FUTURE = 30;
 const TOTAL_DAYS    = WINDOW_PAST + 1 + WINDOW_FUTURE;
-const TODAY_IDX     = WINDOW_PAST;  // index of today in the slide array
+const TODAY_IDX     = WINDOW_PAST;
 
 const TYPES = [
-  { id: 'task',        label: 'Task',        icon: '✓' },
-  { id: 'appointment', label: 'Appt',        icon: '📅' },
-  { id: 'reminder',    label: 'Reminder',    icon: '🔔' },
-  { id: 'note',        label: 'Note',        icon: '📝' },
+  { id: 'task',        label: 'Task',     icon: '✓'  },
+  { id: 'appointment', label: 'Appt',     icon: '📅' },
+  { id: 'reminder',    label: 'Reminder', icon: '🔔' },
+  { id: 'note',        label: 'Note',     icon: '📝' },
 ];
 
 // ── State ──────────────────────────────────────────────────────────────────
-let data          = {};   // { "yyyy-MM-dd": [items…] }
-let currentIdx    = TODAY_IDX;
-let editingItem   = null; // { item, dateKey } or null
+let data           = {};
+let currentIdx     = TODAY_IDX;
+let editingItem    = null;
 let swRegistration = null;
+
+// itemId → timeoutId  (tracks scheduled per-item notification timers)
+const itemTimers = new Map();
 
 // ── Date helpers ───────────────────────────────────────────────────────────
 function fmtDate(d) {
@@ -38,25 +41,26 @@ function offsetDate(offset) {
 }
 function dateForIdx(idx) { return offsetDate(idx - TODAY_IDX); }
 function keyForIdx(idx)  { return fmtDate(dateForIdx(idx)); }
+function todayKey()      { return fmtDate(new Date()); }
+function tomorrowKey()   { return fmtDate(offsetDate(1)); }
+
 function relLabel(offset) {
   if (offset === -1) return 'Yesterday';
   if (offset ===  0) return 'Today';
   if (offset ===  1) return 'Tomorrow';
-  const d = offsetDate(offset);
-  return d.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' });
+  return offsetDate(offset).toLocaleDateString('en-US',
+    { weekday: 'long', month: 'short', day: 'numeric' });
 }
 function subLabel(offset) {
   return offsetDate(offset).toLocaleDateString('en-US',
     { month: 'long', day: 'numeric', year: 'numeric' });
 }
-function fmtTime(isoStr) {
-  if (!isoStr) return '';
+function fmtTime(hhmm) {
+  if (!hhmm) return '';
   try {
-    // Stored as "HH:MM"
-    const [h, m] = isoStr.split(':').map(Number);
-    const ampm = h >= 12 ? 'PM' : 'AM';
-    return `${h % 12 || 12}:${pad(m)} ${ampm}`;
-  } catch { return isoStr; }
+    const [h, m] = hhmm.split(':').map(Number);
+    return `${h % 12 || 12}:${pad(m)} ${h >= 12 ? 'PM' : 'AM'}`;
+  } catch { return hhmm; }
 }
 function uuid() {
   return crypto.randomUUID
@@ -90,20 +94,198 @@ function esc(s) {
                        .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
-// ── Build slides ───────────────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════
+//  NOTIFICATION SYSTEM
+// ══════════════════════════════════════════════════════════════════════════
+
+// ── Request permission ─────────────────────────────────────────────────────
+async function ensureNotifPermission() {
+  if (!('Notification' in window)) return false;
+  if (Notification.permission === 'granted') return true;
+  const result = await Notification.requestPermission();
+  return result === 'granted';
+}
+
+// ── Fire one notification via SW (supports actions) ────────────────────────
+function showNotification(title, body, tag, itemId, dateKey) {
+  if (!swRegistration) return;
+  swRegistration.showNotification(title, {
+    body,
+    tag,
+    icon: '/noted/icon-192.png',
+    badge: '/noted/icon-192.png',
+    renotify: true,
+    // Action buttons — shown on lock screen & notification centre
+    actions: [
+      { action: 'complete', title: '✓ Done'  },
+      { action: 'dismiss',  title: 'Dismiss' },
+    ],
+    // Pass item info so SW can route the action back to us
+    data: { itemId, dateKey, url: '/noted/' },
+  });
+}
+
+// ── Schedule a single item notification at its time ────────────────────────
+function scheduleOneItem(item, dateKey) {
+  if (!item.time || item.isCompleted) return;
+
+  // Cancel any existing timer for this item
+  cancelItemTimer(item.id);
+
+  // Build a Date for the item's time on the item's day
+  const [year, month, day] = dateKey.split('-').map(Number);
+  const [hh, mm]           = item.time.split(':').map(Number);
+  const fireAt = new Date(year, month - 1, day, hh, mm, 0, 0);
+  const delay  = fireAt - Date.now();
+
+  if (delay <= 0) return; // already past — don't fire
+
+  const typeObj = TYPES.find(t => t.id === item.type) || TYPES[0];
+  const title   = `${typeObj.icon} ${item.title}`;
+  const body    = item.detail || `${typeObj.label} at ${fmtTime(item.time)}`;
+  const tag     = `noted-item-${item.id}`;
+
+  const timerId = setTimeout(async () => {
+    itemTimers.delete(item.id);
+    if (!(await ensureNotifPermission())) return;
+    showNotification(title, body, tag, item.id, dateKey);
+  }, delay);
+
+  itemTimers.set(item.id, timerId);
+}
+
+// ── Cancel a pending timer ─────────────────────────────────────────────────
+function cancelItemTimer(itemId) {
+  if (itemTimers.has(itemId)) {
+    clearTimeout(itemTimers.get(itemId));
+    itemTimers.delete(itemId);
+  }
+}
+
+// ── (Re-)schedule all pending timed items for today & tomorrow ─────────────
+function rescheduleAllNotifications() {
+  if (Notification.permission !== 'granted') return;
+  // Cancel everything first
+  itemTimers.forEach((t) => clearTimeout(t));
+  itemTimers.clear();
+
+  [todayKey(), tomorrowKey()].forEach(dateKey => {
+    itemsFor(dateKey)
+      .filter(i => i.time && !i.isCompleted)
+      .forEach(i => scheduleOneItem(i, dateKey));
+  });
+}
+
+// ── Morning summary notification (for items with no time) ──────────────────
+let morningTimer = null;
+
+function scheduleMorningReminder(hourMinStr) {
+  clearTimeout(morningTimer);
+  const [h, m] = hourMinStr.split(':').map(Number);
+  const now    = new Date();
+  const next   = new Date();
+  next.setHours(h, m, 0, 0);
+  if (next <= now) next.setDate(next.getDate() + 1);
+
+  morningTimer = setTimeout(async () => {
+    if (!(await ensureNotifPermission())) return;
+
+    const key   = todayKey();
+    const items = itemsFor(key).filter(i => !i.isCompleted);
+    // Items with no time — the timed ones will fire on their own
+    const untimedItems = items.filter(i => !i.time);
+
+    if (items.length === 0) {
+      showNotification('🌙 Noted', "You're all clear today! ✓",
+        'noted-morning', null, null);
+    } else {
+      const lines = untimedItems.slice(0, 3).map(i => {
+        const t = TYPES.find(x => x.id === i.type) || TYPES[0];
+        return `${t.icon} ${i.title}`;
+      }).join('\n');
+      const extra = untimedItems.length > 3
+        ? `\n+${untimedItems.length - 3} more` : '';
+      const timedNote = items.length > untimedItems.length
+        ? ` · ${items.length - untimedItems.length} timed item${items.length - untimedItems.length > 1 ? 's' : ''} will notify on time` : '';
+      showNotification(
+        `🌙 Noted — ${items.length} item${items.length>1?'s':''} today`,
+        (lines || 'Tap to review your day') + extra + timedNote,
+        'noted-morning', null, key
+      );
+    }
+
+    // Reschedule for tomorrow
+    scheduleMorningReminder(hourMinStr);
+    // Also reschedule timed items for today (fresh day)
+    rescheduleAllNotifications();
+  }, next - now);
+
+  localStorage.setItem('noted_reminder', hourMinStr);
+}
+
+// ── Handle "✓ Done" tapped on a notification (message from SW) ────────────
+function handleCompleteFromNotification(itemId, dateKey) {
+  const list = data[dateKey];
+  if (!list) return;
+  const item = list.find(i => i.id === itemId);
+  if (!item || item.isCompleted) return;
+  item.isCompleted = true;
+  save();
+  cancelItemTimer(itemId);
+  // Re-render whichever slide matches this dateKey
+  for (let i = 0; i < TOTAL_DAYS; i++) {
+    if (keyForIdx(i) === dateKey) { renderSlide(i); break; }
+  }
+}
+
+// ── Listen for messages from the Service Worker ────────────────────────────
+function listenForSWMessages() {
+  if (!navigator.serviceWorker) return;
+  navigator.serviceWorker.addEventListener('message', e => {
+    if (!e.data) return;
+    if (e.data.type === 'COMPLETE_ITEM') {
+      handleCompleteFromNotification(e.data.itemId, e.data.dateKey);
+    }
+  });
+}
+
+// ── UI: request notifications & set morning reminder ──────────────────────
+async function requestNotifications() {
+  if (!('Notification' in window)) {
+    alert('Notifications are not supported.\nAdd Noted to your Home Screen via Safari first.');
+    return;
+  }
+  const granted = await ensureNotifPermission();
+  if (granted) {
+    const time = $('reminder-time').value || '08:00';
+    scheduleMorningReminder(time);
+    rescheduleAllNotifications();
+    alert(
+      `✓ Notifications enabled!\n\n` +
+      `• Morning summary: ${fmtTime(time)} daily\n` +
+      `• Items with a time: notification exactly at that time\n` +
+      `• Swipe a notification to dismiss it`
+    );
+  } else {
+    alert('Permission denied.\nGo to iPhone Settings → Notifications → Noted and enable them.');
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+//  SLIDES / RENDERING
+// ══════════════════════════════════════════════════════════════════════════
+
 function buildTrack() {
   const track = $('days-track');
   track.innerHTML = '';
   for (let i = 0; i < TOTAL_DAYS; i++) {
     const slide = el('div', 'day-slide');
-    const rel = i - TODAY_IDX;
     slide.dataset.idx = i;
-    slide.dataset.rel = rel;
+    slide.dataset.rel = i - TODAY_IDX;
     slide.id = `slide-${i}`;
     track.appendChild(slide);
     renderSlide(i);
   }
-  // Scroll to today immediately (no animation)
   const todaySlide = $(`slide-${TODAY_IDX}`);
   track.scrollLeft = todaySlide.offsetLeft;
 }
@@ -111,8 +293,8 @@ function buildTrack() {
 function renderSlide(idx) {
   const slide = $(`slide-${idx}`);
   if (!slide) return;
-  const rel  = idx - TODAY_IDX;
-  const key  = keyForIdx(idx);
+  const rel   = idx - TODAY_IDX;
+  const key   = keyForIdx(idx);
   const items = itemsFor(key);
   const pending = items.filter(i => !i.isCompleted);
   const done    = items.length - pending.length;
@@ -144,11 +326,10 @@ function renderSlide(idx) {
           <div class="title">${rel === 0 ? 'Nothing yet today' : rel < 0 ? 'All clear' : 'Nothing planned'}</div>
           <div class="sub">Tap + to add something</div>
         </div>` :
-        items.map((item, itemIdx) => renderItemCard(item, key, idx, itemIdx)).join('')
+        items.map((item, ii) => renderItemCard(item, key, idx, ii)).join('')
       }
     </div>`;
 
-  // Attach card event listeners
   items.forEach(item => {
     const card = slide.querySelector(`[data-id="${item.id}"]`);
     if (!card) return;
@@ -163,6 +344,7 @@ function renderSlide(idx) {
 
 function renderItemCard(item, key, idx, itemIdx) {
   const typeObj = TYPES.find(t => t.id === item.type) || TYPES[0];
+  const hasNotif = item.time && !item.isCompleted && Notification.permission === 'granted';
   return `
     <div class="item-card ${item.isCompleted ? 'completed' : ''}"
          data-id="${esc(item.id)}"
@@ -179,45 +361,34 @@ function renderItemCard(item, key, idx, itemIdx) {
       </div>
       <div class="item-meta">
         <span class="type-icon">${typeObj.icon}</span>
-        ${item.time ? `<span class="item-time">${esc(fmtTime(item.time))}</span>` : ''}
+        ${item.time ? `<span class="item-time">${esc(fmtTime(item.time))}${hasNotif ? ' 🔔' : ''}</span>` : ''}
       </div>
     </div>`;
 }
 
-// ── Swipe-to-delete on item cards ─────────────────────────────────────────
+// ── Swipe-to-delete ────────────────────────────────────────────────────────
 function attachSwipe(card, itemId, key, slideIdx) {
   let startX = 0, startY = 0, dragging = false;
-
   card.addEventListener('touchstart', e => {
     startX = e.touches[0].clientX;
     startY = e.touches[0].clientY;
     dragging = false;
   }, { passive: true });
-
   card.addEventListener('touchmove', e => {
     const dx = e.touches[0].clientX - startX;
     const dy = Math.abs(e.touches[0].clientY - startY);
-    if (!dragging && Math.abs(dx) > 10 && dy < 30) {
-      dragging = true;
-    }
-    if (dragging && dx < -20) {
-      card.classList.add('swipe-reveal');
-      e.stopPropagation();
-    } else if (dragging && dx > 10) {
-      card.classList.remove('swipe-reveal');
-    }
+    if (!dragging && Math.abs(dx) > 10 && dy < 30) dragging = true;
+    if (dragging && dx < -20) { card.classList.add('swipe-reveal'); e.stopPropagation(); }
+    else if (dragging && dx > 10) card.classList.remove('swipe-reveal');
   }, { passive: true });
-
   card.addEventListener('touchend', e => {
     if (dragging && card.classList.contains('swipe-reveal')) {
-      const dx = e.changedTouches[0].clientX - startX;
-      if (dx < -60) {
+      if (e.changedTouches[0].clientX - startX < -60) {
         deleteItem(itemId, key, slideIdx);
         return;
       }
     }
-    if (!dragging) return;
-    card.classList.remove('swipe-reveal');
+    if (dragging) card.classList.remove('swipe-reveal');
   });
 }
 
@@ -226,11 +397,17 @@ function toggleItem(id, key, slideIdx) {
   const list = data[key];
   if (!list) return;
   const item = list.find(i => i.id === id);
-  if (item) { item.isCompleted = !item.isCompleted; save(); renderSlide(slideIdx); }
+  if (!item) return;
+  item.isCompleted = !item.isCompleted;
+  save();
+  renderSlide(slideIdx);
+  if (item.isCompleted) cancelItemTimer(id);
+  else scheduleOneItem(item, key);
 }
 
 function deleteItem(id, key, slideIdx) {
   if (!data[key]) return;
+  cancelItemTimer(id);
   data[key] = data[key].filter(i => i.id !== id);
   save();
   renderSlide(slideIdx);
@@ -239,58 +416,59 @@ function deleteItem(id, key, slideIdx) {
 
 function addItem(title, detail, type, timeVal, key, slideIdx) {
   if (!data[key]) data[key] = [];
-  data[key].push({
-    id: uuid(), title, detail, type,
-    time: timeVal || null,
-    isCompleted: false,
-    createdAt: new Date().toISOString()
-  });
+  const item = { id: uuid(), title, detail, type,
+    time: timeVal || null, isCompleted: false, createdAt: new Date().toISOString() };
+  data[key].push(item);
   save();
   renderSlide(slideIdx);
   updateDots();
+  // Schedule notification if it has a time and notifications are on
+  if (item.time && Notification.permission === 'granted') scheduleOneItem(item, key);
 }
 
 function updateItem(id, key, slideIdx, changes) {
   const list = data[key];
   if (!list) return;
   const item = list.find(i => i.id === id);
-  if (item) { Object.assign(item, changes); save(); renderSlide(slideIdx); updateDots(); }
+  if (!item) return;
+  Object.assign(item, changes);
+  save();
+  cancelItemTimer(id);
+  if (item.time && !item.isCompleted && Notification.permission === 'granted') {
+    scheduleOneItem(item, key);
+  }
+  renderSlide(slideIdx);
+  updateDots();
 }
 
 // ── Sheets ─────────────────────────────────────────────────────────────────
-function openSheet(overlayId) {
-  const overlay = $(overlayId);
-  overlay.style.display = 'block';
-  requestAnimationFrame(() => overlay.classList.add('open'));
+function openSheet(id) {
+  const o = $(id);
+  o.style.display = 'block';
+  requestAnimationFrame(() => o.classList.add('open'));
   document.body.style.overflow = 'hidden';
 }
-function closeSheet(overlayId) {
-  const overlay = $(overlayId);
-  overlay.classList.remove('open');
+function closeSheet(id) {
+  const o = $(id);
+  o.classList.remove('open');
   document.body.style.overflow = '';
-  setTimeout(() => { overlay.style.display = 'none'; }, 380);
+  setTimeout(() => { o.style.display = 'none'; }, 380);
 }
 
-// ── Add sheet ──────────────────────────────────────────────────────────────
 function openAddSheet() {
-  resetAddForm();
-  openSheet('add-overlay');
-  setTimeout(() => $('add-title').focus(), 400);
-}
-
-function resetAddForm() {
   $('add-title').value = '';
   $('add-detail').value = '';
   $('add-time-check').checked = false;
   $('add-time-val').disabled = true;
   $('add-time-val').value = '';
   selectType('add', 'task');
+  openSheet('add-overlay');
+  setTimeout(() => $('add-title').focus(), 400);
 }
 
 function selectType(prefix, typeId) {
-  document.querySelectorAll(`#${prefix}-type-row .type-pill`).forEach(p => {
-    p.classList.toggle('selected', p.dataset.type === typeId);
-  });
+  document.querySelectorAll(`#${prefix}-type-row .type-pill`)
+    .forEach(p => p.classList.toggle('selected', p.dataset.type === typeId));
 }
 
 function submitAdd() {
@@ -301,21 +479,18 @@ function submitAdd() {
   const type    = typeEl ? typeEl.dataset.type : 'task';
   const hasTime = $('add-time-check').checked;
   const timeVal = hasTime ? $('add-time-val').value : null;
-  const key     = keyForIdx(currentIdx);
-  addItem(title, detail, type, timeVal, key, currentIdx);
+  addItem(title, detail, type, timeVal, keyForIdx(currentIdx), currentIdx);
   closeSheet('add-overlay');
 }
 
-// ── Edit sheet ─────────────────────────────────────────────────────────────
 function openEditSheet(item, key, slideIdx) {
   editingItem = { item, key, slideIdx };
-  $('edit-title').value  = item.title || '';
-  $('edit-detail').value = item.detail || '';
-  selectType('edit', item.type || 'task');
-  const hasTime = !!item.time;
-  $('edit-time-check').checked = hasTime;
-  $('edit-time-val').disabled  = !hasTime;
+  $('edit-title').value        = item.title || '';
+  $('edit-detail').value       = item.detail || '';
+  $('edit-time-check').checked = !!item.time;
+  $('edit-time-val').disabled  = !item.time;
   $('edit-time-val').value     = item.time || '';
+  selectType('edit', item.type || 'task');
   openSheet('edit-overlay');
   setTimeout(() => $('edit-title').focus(), 400);
 }
@@ -342,34 +517,30 @@ function submitDelete() {
   editingItem = null;
 }
 
-// ── Day dots ────────────────────────────────────────────────────────────────
+// ── Dots ───────────────────────────────────────────────────────────────────
 function buildDots() {
-  const container = $('day-dots');
-  container.innerHTML = '';
-  // Show dots for today ±3
+  const c = $('day-dots');
+  c.innerHTML = '';
   for (let i = TODAY_IDX - 3; i <= TODAY_IDX + 3; i++) {
-    const dot = el('div', 'day-dot' + (i === TODAY_IDX ? ' active' : ''));
-    dot.dataset.idx = i;
-    container.appendChild(dot);
+    const d = el('div', 'day-dot' + (i === TODAY_IDX ? ' active' : ''));
+    d.dataset.idx = i;
+    c.appendChild(d);
   }
 }
-
 function updateDots() {
-  document.querySelectorAll('.day-dot').forEach(dot => {
-    const idx = parseInt(dot.dataset.idx);
-    dot.classList.toggle('active', idx === currentIdx);
+  document.querySelectorAll('.day-dot').forEach(d => {
+    d.classList.toggle('active', parseInt(d.dataset.idx) === currentIdx);
   });
 }
 
-// ── Scroll / snap tracking ─────────────────────────────────────────────────
+// ── Scroll tracking ────────────────────────────────────────────────────────
 function initScrollTracking() {
   const track = $('days-track');
-  let scrollTimer;
+  let t;
   track.addEventListener('scroll', () => {
-    clearTimeout(scrollTimer);
-    scrollTimer = setTimeout(() => {
-      const slideW = track.offsetWidth;
-      const newIdx = Math.round(track.scrollLeft / slideW);
+    clearTimeout(t);
+    t = setTimeout(() => {
+      const newIdx = Math.round(track.scrollLeft / track.offsetWidth);
       if (newIdx !== currentIdx && newIdx >= 0 && newIdx < TOTAL_DAYS) {
         currentIdx = newIdx;
         updateDots();
@@ -378,61 +549,12 @@ function initScrollTracking() {
   }, { passive: true });
 }
 
-// ── Settings / notifications ─────────────────────────────────────────────────
-let reminderTimer = null;
-
-function scheduleLocalReminder(hourMinStr) {
-  // hourMinStr = "HH:MM"
-  clearTimeout(reminderTimer);
-  const [h, m] = hourMinStr.split(':').map(Number);
-  const now  = new Date();
-  const next = new Date();
-  next.setHours(h, m, 0, 0);
-  if (next <= now) next.setDate(next.getDate() + 1);
-  const delay = next - now;
-
-  reminderTimer = setTimeout(() => {
-    const todayKey = fmtDate(new Date());
-    const items = itemsFor(todayKey).filter(i => !i.isCompleted);
-    const body = items.length === 0
-      ? "You're all clear today! ✓"
-      : `${items.length} item${items.length>1?'s':''} today — tap to review.`;
-
-    if (swRegistration) {
-      swRegistration.showNotification('🌙 Noted', { body, tag: 'noted-daily', icon: '/icon-192.png' });
-    } else if (Notification.permission === 'granted') {
-      new Notification('🌙 Noted', { body, tag: 'noted-daily' });
-    }
-    // Schedule tomorrow
-    scheduleLocalReminder(hourMinStr);
-  }, delay);
-
-  localStorage.setItem('noted_reminder', hourMinStr);
-}
-
-async function requestNotifications() {
-  if (!('Notification' in window)) {
-    alert('Notifications are not supported in this browser.\nTry Safari on iPhone with Noted added to your Home Screen.');
-    return;
-  }
-  const perm = await Notification.requestPermission();
-  if (perm === 'granted') {
-    const time = $('reminder-time').value || '08:00';
-    scheduleLocalReminder(time);
-    alert(`✓ Morning reminder set for ${fmtTime(time)} every day!`);
-  } else {
-    alert('Notification permission denied. Enable it in Settings → Safari → Notifications.');
-  }
-}
-
-// ── Export / Import ─────────────────────────────────────────────────────────
+// ── Export / Import ────────────────────────────────────────────────────────
 function exportData() {
-  const json = JSON.stringify(data, null, 2);
-  const blob = new Blob([json], { type: 'application/json' });
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
   const url  = URL.createObjectURL(blob);
-  const a    = document.createElement('a');
-  a.href = url;
-  a.download = `noted-backup-${fmtDate(new Date())}.json`;
+  const a    = Object.assign(document.createElement('a'),
+    { href: url, download: `noted-backup-${fmtDate(new Date())}.json` });
   a.click();
   URL.revokeObjectURL(url);
 }
@@ -444,60 +566,52 @@ function importData(e) {
   reader.onload = ev => {
     try {
       const imported = JSON.parse(ev.target.result);
-      if (typeof imported !== 'object') throw new Error();
-      // Merge: imported keys win
+      if (typeof imported !== 'object') throw 0;
       data = { ...data, ...imported };
-      save();
-      buildTrack();
-      updateDots();
+      save(); buildTrack(); updateDots(); rescheduleAllNotifications();
       closeSheet('settings-overlay');
-      alert('✓ Data imported successfully!');
-    } catch {
-      alert('Invalid file. Please use a Noted backup JSON.');
-    }
+      alert('✓ Data imported!');
+    } catch { alert('Invalid file. Use a Noted backup JSON.'); }
   };
   reader.readAsText(file);
   e.target.value = '';
 }
 
-// ── Build type rows ──────────────────────────────────────────────────────────
+// ── Build type pills ────────────────────────────────────────────────────────
 function buildTypeRow(prefix) {
   const row = $(`${prefix}-type-row`);
   if (!row) return;
   row.innerHTML = TYPES.map(t => `
-    <button class="type-pill ${t.id==='task' ? 'selected' : ''}" data-type="${t.id}">
-      <span class="tp-icon">${t.icon}</span>
-      <span>${t.label}</span>
+    <button class="type-pill ${t.id==='task'?'selected':''}" data-type="${t.id}">
+      <span class="tp-icon">${t.icon}</span><span>${t.label}</span>
     </button>`).join('');
-  row.querySelectorAll('.type-pill').forEach(btn => {
-    btn.addEventListener('click', () => selectType(prefix, btn.dataset.type));
-  });
+  row.querySelectorAll('.type-pill').forEach(btn =>
+    btn.addEventListener('click', () => selectType(prefix, btn.dataset.type))
+  );
 }
 
-// ── Service Worker registration ──────────────────────────────────────────────
+// ── Service Worker ──────────────────────────────────────────────────────────
 async function registerSW() {
-  if ('serviceWorker' in navigator) {
-    try {
-      swRegistration = await navigator.serviceWorker.register('./sw.js');
-    } catch (e) {
-      // sw registration failure is non-fatal (e.g. file:// protocol)
-      console.warn('SW registration failed (ok if running from file://):', e.message);
-    }
+  if (!('serviceWorker' in navigator)) return;
+  try {
+    swRegistration = await navigator.serviceWorker.register('./sw.js');
+    listenForSWMessages();
+  } catch (e) {
+    console.warn('SW registration failed:', e.message);
   }
 }
 
-// ── Key events ───────────────────────────────────────────────────────────────
+// ── Keyboard shortcuts ──────────────────────────────────────────────────────
 document.addEventListener('keydown', e => {
-  if (e.key === 'Escape') {
+  if (e.key === 'Escape')
     ['add-overlay','edit-overlay','settings-overlay'].forEach(closeSheet);
-  }
   if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
-    if ($('add-overlay').classList.contains('open')) submitAdd();
+    if ($('add-overlay').classList.contains('open'))  submitAdd();
     if ($('edit-overlay').classList.contains('open')) submitEdit();
   }
 });
 
-// ── Init ─────────────────────────────────────────────────────────────────────
+// ── Init ────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', async () => {
   load();
   buildTrack();
@@ -507,18 +621,33 @@ document.addEventListener('DOMContentLoaded', async () => {
   initScrollTracking();
   await registerSW();
 
-  // Restore reminder if set
-  const savedReminder = localStorage.getItem('noted_reminder');
-  if (savedReminder) {
+  // Ask SW for any "Done" actions that fired while app was closed
+  if (navigator.serviceWorker && navigator.serviceWorker.controller) {
+    navigator.serviceWorker.controller.postMessage({ type: 'GET_PENDING_COMPLETIONS' });
+  }
+  // Also handle them if they arrive later
+  if (navigator.serviceWorker) {
+    navigator.serviceWorker.addEventListener('message', e => {
+      if (e.data && e.data.type === 'PENDING_COMPLETIONS') {
+        e.data.items.forEach(({ itemId, dateKey }) =>
+          handleCompleteFromNotification(itemId, dateKey)
+        );
+      }
+    });
+  }
+
+  // Restore morning reminder
+  const saved = localStorage.getItem('noted_reminder');
+  if (saved) {
     const ri = $('reminder-time');
-    if (ri) ri.value = savedReminder;
+    if (ri) ri.value = saved;
     if (Notification.permission === 'granted') {
-      scheduleLocalReminder(savedReminder);
+      scheduleMorningReminder(saved);
+      rescheduleAllNotifications();
     }
   }
 
-  // ── Event listeners ──────────────────────────────────────────────────
-  // Add sheet
+  // ── Wire up all buttons ──────────────────────────────────────────────
   $('add-btn').addEventListener('click', openAddSheet);
   $('add-cancel').addEventListener('click', () => closeSheet('add-overlay'));
   $('add-save').addEventListener('click', submitAdd);
@@ -536,7 +665,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (e.target.checked) $('add-time-val').focus();
   });
 
-  // Edit sheet
   $('edit-cancel').addEventListener('click', () => closeSheet('edit-overlay'));
   $('edit-save').addEventListener('click', submitEdit);
   $('edit-delete').addEventListener('click', submitDelete);
@@ -551,7 +679,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (e.target.checked) $('edit-time-val').focus();
   });
 
-  // Settings
   $('settings-btn').addEventListener('click', () => openSheet('settings-overlay'));
   $('settings-close').addEventListener('click', () => closeSheet('settings-overlay'));
   $('settings-overlay').addEventListener('click', e => {
