@@ -478,7 +478,7 @@ function buildTypeRow(prefix) {
 async function registerSW() {
   if ('serviceWorker' in navigator) {
     try {
-      swRegistration = await navigator.serviceWorker.register('/sw.js');
+      swRegistration = await navigator.serviceWorker.register('./sw.js');
     } catch (e) {
       // sw registration failure is non-fatal (e.g. file:// protocol)
       console.warn('SW registration failed (ok if running from file://):', e.message);
