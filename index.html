@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0f2027">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Noted">
+  <meta name="description" content="Personal daily planner — tasks, appointments, reminders.">
+
+  <!-- PWA manifest -->
+  <link rel="manifest" href="manifest.json">
+
+  <!-- iOS icons (generated inline SVG as placeholder — replace with real PNGs) -->
+  <link rel="apple-touch-icon" href="icon-192.png">
+
+  <title>Noted</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<div id="app">
+  <!-- Horizontal swipeable day track -->
+  <div id="days-track"></div>
+</div>
+
+<!-- Floating settings button -->
+<button id="settings-btn" aria-label="Settings">⚙</button>
+
+<!-- Day position dots -->
+<div id="day-dots"></div>
+
+<!-- Add button -->
+<button id="add-btn">
+  <span class="plus">+</span>
+  <span>Add</span>
+</button>
+
+
+<!-- ═══════════ ADD SHEET ═══════════ -->
+<div class="sheet-overlay" id="add-overlay" style="display:none">
+  <div class="sheet">
+    <div class="sheet-handle"></div>
+    <div class="sheet-title">New Item</div>
+
+    <div class="field">
+      <label>Title</label>
+      <input type="text" id="add-title" placeholder="What's on your mind?" autocomplete="off">
+    </div>
+
+    <div class="field">
+      <label>Details <span style="opacity:.4;font-weight:400;text-transform:none;letter-spacing:0">optional</span></label>
+      <textarea id="add-detail" placeholder="Extra info…" rows="2"></textarea>
+    </div>
+
+    <div class="field">
+      <label>Type</label>
+      <div class="type-row" id="add-type-row"></div>
+    </div>
+
+    <div class="field">
+      <label>Time</label>
+      <div class="time-row">
+        <label class="toggle-wrap">
+          <label class="toggle">
+            <input type="checkbox" id="add-time-check">
+            <span class="toggle-slider"></span>
+          </label>
+          <span>Set a time</span>
+        </label>
+        <input type="time" class="time-field" id="add-time-val" disabled>
+      </div>
+    </div>
+
+    <div class="sheet-actions">
+      <button class="btn btn-cancel" id="add-cancel">Cancel</button>
+      <button class="btn btn-save" id="add-save" disabled>Add</button>
+    </div>
+  </div>
+</div>
+
+
+<!-- ═══════════ EDIT SHEET ═══════════ -->
+<div class="sheet-overlay" id="edit-overlay" style="display:none">
+  <div class="sheet">
+    <div class="sheet-handle"></div>
+    <div class="sheet-title">Edit Item</div>
+
+    <div class="field">
+      <label>Title</label>
+      <input type="text" id="edit-title" placeholder="Title" autocomplete="off">
+    </div>
+
+    <div class="field">
+      <label>Details <span style="opacity:.4;font-weight:400;text-transform:none;letter-spacing:0">optional</span></label>
+      <textarea id="edit-detail" placeholder="Extra info…" rows="2"></textarea>
+    </div>
+
+    <div class="field">
+      <label>Type</label>
+      <div class="type-row" id="edit-type-row"></div>
+    </div>
+
+    <div class="field">
+      <label>Time</label>
+      <div class="time-row">
+        <label class="toggle-wrap">
+          <label class="toggle">
+            <input type="checkbox" id="edit-time-check">
+            <span class="toggle-slider"></span>
+          </label>
+          <span>Set a time</span>
+        </label>
+        <input type="time" class="time-field" id="edit-time-val" disabled>
+      </div>
+    </div>
+
+    <div class="sheet-actions">
+      <button class="btn btn-delete" id="edit-delete">Delete</button>
+      <button class="btn btn-cancel" id="edit-cancel">Cancel</button>
+      <button class="btn btn-save" id="edit-save">Save</button>
+    </div>
+  </div>
+</div>
+
+
+<!-- ═══════════ SETTINGS SHEET ═══════════ -->
+<div class="sheet-overlay" id="settings-overlay" style="display:none">
+  <div class="sheet">
+    <div class="sheet-handle"></div>
+    <div class="sheet-title">Settings</div>
+
+    <!-- Morning reminder -->
+    <div class="settings-row">
+      <div class="settings-label">
+        <div>🔔 Morning Reminder</div>
+        <div class="settings-sub">Notification on your lock screen each day</div>
+      </div>
+    </div>
+    <div class="settings-row" style="gap:12px; padding-top: 8px;">
+      <div class="field" style="flex:1; margin:0">
+        <input type="time" id="reminder-time" value="08:00"
+               style="background:rgba(255,255,255,.06);border:1px solid var(--glass-border);border-radius:10px;color:var(--text);font-size:15px;font-family:inherit;padding:11px 14px;outline:none;width:100%">
+      </div>
+      <button class="btn-sm" id="btn-notif">Enable</button>
+    </div>
+    <div style="font-size:12px;color:var(--text-muted);padding:4px 0 12px;line-height:1.5">
+      On iPhone: add Noted to Home Screen first, then enable.
+    </div>
+
+    <!-- Export -->
+    <div class="settings-row" style="padding-top:14px">
+      <div class="settings-label">
+        <div>📤 Export Data</div>
+        <div class="settings-sub">Download a backup JSON file</div>
+      </div>
+      <button class="btn-sm" id="btn-export">Export</button>
+    </div>
+
+    <!-- Import -->
+    <div class="settings-row">
+      <div class="settings-label">
+        <div>📥 Import Data</div>
+        <div class="settings-sub">Load a backup or sync file</div>
+      </div>
+      <button class="btn-sm" id="btn-import">Import</button>
+      <input type="file" id="import-input" accept=".json" style="display:none">
+    </div>
+
+    <div class="settings-row" style="border:none; padding-bottom:0; margin-top:8px">
+      <button class="btn btn-cancel" id="settings-close" style="flex:none;width:100%;text-align:center">
+        Close
+      </button>
+    </div>
+  </div>
+</div>
+
+
+<script src="app.js"></script>
+</body>
+</html>
